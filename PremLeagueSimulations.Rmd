@@ -1,0 +1,644 @@
+
+```{r}
+library(dplyr)
+library('gtools')
+library(ggplot2)
+```
+
+```{r}
+inTeams<-read.csv("https://projects.fivethirtyeight.com/soccer-api/club/spi_global_rankings.csv")
+#inTeams<-read.csv('./538/spi_global_rankings.csv')
+head(inTeams)
+```
+
+```{r}
+mean.off<-mean(inTeams$off)
+mean.def<-mean(inTeams$def)
+lmean.off<-mean(log(inTeams$off))
+lmean.def<-mean(log(inTeams$def) ) 
+mean.off
+mean.def
+```
+
+```{r}
+premLeague<-subset(inTeams,league=="Barclays Premier League")
+premTeams<-premLeague$name
+rownames(premLeague)<-premTeams
+df.prem<-premLeague[,c("off","def")]
+df.prem
+```
+
+```{r}
+# for poisson distribution, there's a parameter which is lambda
+# when team i is playing with team j
+# alpha is the offense parameter for team i
+# delta is the defense parameter for team j
+lmean.def<- log(mean(df.prem$def))
+lmean.off<- log(mean(df.prem$off))               
+df.prem["alpha"]<-log(df.prem["off"])-lmean.def
+df.prem["delta"]<-lmean.off-log(df.prem["def"])
+head(df.prem)
+```
+
+```{r}
+alphaList<-df.prem$alpha
+deltaList<-df.prem$delta
+names(alphaList)<-rownames(df.prem)
+names(deltaList)<-rownames(df.prem)
+alphaList["Liverpool"] # for Liverpool, the alpha is 1.161783
+```
+
+```{r}
+rpois(10,exp(alphaList["Liverpool"]-deltaList["Manchester City"]) )
+# simulating a soccer match between Liverpool and Manchester City using the parameters alpha and delta.
+```
+
+```{r}
+c(rpois(1,exp(alphaList["Liverpool"]-deltaList["Manchester City"])),
+  rpois(1,exp(alphaList["Manchester City"]-deltaList["Liverpool"])))
+#  from both teams' perspectives.
+```
+
+```{r}
+draw.score<-function(team1,team2){
+    c(
+        rpois(1,exp(alphaList[team1]-deltaList[team2])),
+  rpois(1,exp(alphaList[team2]-deltaList[team1]))
+    )
+}
+draw.score("Liverpool","Arsenal")
+```
+
+```{r}
+df.prem[c("Liverpool","Arsenal"),]
+```
+
+```{r}
+draw.score("Liverpool","Arsenal")
+```
+
+```{r}
+# All possible matches in a season
+allMatches<-permutations(20, 2, v=rownames(df.prem),repeats.allowed=FALSE)
+colnames(allMatches)<-c("home","away")
+head(allMatches,9)
+length(allMatches)
+```
+
+```{r}
+# Example scores through the entire season
+ScoresMatrix <- matrix(nrow=nrow(allMatches),  ncol=4)
+for (ii in 1:nrow(allMatches)  ) {
+     ScoresMatrix[ii,1:2]=allMatches[ii,]
+     ScoresMatrix[ii,3:4]= draw.score(allMatches[ii,"home"],allMatches[ii,"away"] )  
+}
+colnames(ScoresMatrix)<-c("home.team","away.team","home.score","away.score")
+head(ScoresMatrix)
+```
+```{r}
+Revenue_effects <- c(149.6, 145.9, 142.1, 138.4, 73.7, 70.0, 55.2, 33.5, 29.8, 26.0,
+                     22.3, 18.6, 14.9, 11.2, 7.5, 3.7, 0, -88.7, -92.5, -96.2)
+League_Position <- 1:20
+LeaguePositionRevenueEffect <- data.frame(League_Position = League_Position, Revenue_Effect = Revenue_effects)
+```
+
+
+```{r}
+# Revenue effects (already defined in your code)
+# LeaguePositionRevenueEffect <- data.frame(...)
+# Function to simulate scores for one match
+draw.score <- function(team1, team2) {
+  c(
+    rpois(1, exp(alphaList[team1] - deltaList[team2])),
+    rpois(1, exp(alphaList[team2] - deltaList[team1]))
+  )
+}
+```
+
+```{r}
+# Simulate an entire season
+# n_sims: the number of simulations to run for the season.
+simulate_season <- function(n_sims) {
+  ScoresMatrix <- matrix(nrow = nrow(allMatches), ncol = 4)
+  for (i in 1:n_sims) {
+    tempMatches <- allMatches
+    for (j in 1:nrow(tempMatches)) { # creates a temporary copy of the allMatches data frame to be used within each simulation loop.
+      home.team <- tempMatches[j, "home"]
+      away.team <- tempMatches[j, "away"]
+      scores <- draw.score(home.team, away.team)
+      ScoresMatrix[j, 1:2] <- c(home.team, away.team)
+      ScoresMatrix[j, 3:4] <- scores
+    }
+  }
+  colnames(ScoresMatrix) <- c("home.team", "away.team", "home.score", "away.score")
+  return(ScoresMatrix)
+}
+```
+
+```{r}
+# Process results of a simulated season
+process_results <- function(ScoresMatrix) {
+  n_teams <- nrow(df.prem)
+  team_names <- rownames(df.prem)
+  points <- rep(0, n_teams)
+  goals_for <- rep(0, n_teams)
+  goals_against <- rep(0, n_teams)
+  tiebreakers <- runif(n_teams)
+  
+  for (i in 1:nrow(ScoresMatrix)) {
+    home.team <- ScoresMatrix[i, "home.team"]
+    away.team <- ScoresMatrix[i, "away.team"]
+    home.score <- as.numeric(ScoresMatrix[i, "home.score"])  # Ensure numeric type
+    away.score <- as.numeric(ScoresMatrix[i, "away.score"])  # Ensure numeric type
+    
+    # Check data types
+    if (!is.numeric(home.score) || !is.numeric(away.score)) {
+      print("Error: Scores are not numeric.")
+      break
+    }
+    
+    points[team_names == home.team] <- points[team_names == home.team] + ifelse(home.score > away.score, 3, ifelse(home.score == away.score, 1, 0))
+    points[team_names == away.team] <- points[team_names == away.team] + ifelse(away.score > home.score, 3, ifelse(away.score == home.score, 1, 0))
+    
+    goals_for[team_names == home.team] <- goals_for[team_names == home.team] + home.score
+    goals_against[team_names == home.team] <- goals_against[team_names == home.team] + away.score
+    goals_for[team_names == away.team] <- goals_for[team_names == away.team] + away.score
+    goals_against[team_names == away.team] <- goals_against[team_names == away.team] + home.score
+  }
+  
+  df <- data.frame(Team = team_names, Points = points, Goals.For = goals_for, Goals.Against = goals_against, Tiebreaker = tiebreakers)
+  return(df)
+}
+```
+
+
+```{r}
+# Rank teams and assign prizes based on results
+rank_and_assign_prizes <- function(results) {
+  results <- arrange(results, desc(Points))
+  results <- arrange(results, desc(Goals.For - Goals.Against), Points)
+  results <- arrange(results, Tiebreaker, Points, desc(Goals.For - Goals.Against))
+  
+  results$League.Position <- 1:nrow(results)
+  results$Prize.Money <- LeaguePositionRevenueEffect[, 2]
+  return(results)
+}
+```
+
+```{r}
+# Define number of simulations
+n_sims <- 1000
+# Simulate multiple seasons
+simulated_seasons <- lapply(1:n_sims, function(i) simulate_season(1))
+```
+
+############## Question 1 #################
+# Assemble a ranking of the teams from best to worst according to their expected position in the table.
+# Illustrate this ranking with a clear visualization of the expected position
+```{r}
+# Combine the results from all simulations
+combined_results <- function(simulated_seasons) {
+  # Make the results into a dataframe
+  combined_df <- data.frame(Team = rownames(df.prem), Average_Points = numeric(nrow(df.prem)))
+  # Calculate average points for each team
+  for (i in 1:length(simulated_seasons)) {
+    season_results <- process_results(simulated_seasons[[i]])
+    combined_df$Average_Points <- combined_df$Average_Points + season_results$Points
+  }
+  combined_df$Average_Points <- combined_df$Average_Points / length(simulated_seasons)
+  return(combined_df)
+}
+
+```
+
+```{r}
+# Rank the teams
+rank_teams <- function(combined_df) {
+  ranked_teams <- combined_df[order(-combined_df$Average_Points), ]
+  ranked_teams$Expected_Position <- seq_len(nrow(ranked_teams))
+  return(ranked_teams)
+}
+visualize_expected_positions <- function(ranked_teams) {
+  ggplot(ranked_teams, aes(x = reorder(Team, Expected_Position), y = Expected_Position)) +
+    geom_bar(stat = "identity", fill = "skyblue") +
+    labs(title = "Expected Positions of Teams", x = "Team", y = "Expected Position") +
+    theme_minimal() +  
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+```{r}
+simulated_seasons <- lapply(1:n_sims, function(i) simulate_season(1))
+combined_results <- combined_results(simulated_seasons)
+ranked_teams <- rank_teams(combined_results)
+expected_position_plot <- visualize_expected_positions(ranked_teams)
+print(expected_position_plot)
+# Define a function to create a table from ranked teams
+create_table_from_ranked_teams <- function(ranked_teams) {
+  ranked_teams_table <- ranked_teams[, c("Team", "Expected_Position", "Average_Points")]
+  colnames(ranked_teams_table) <- c("Team", "Expected Position", "Avg Points")
+  # Print the table
+  print(knitr::kable(ranked_teams_table, caption = "Ranked Teams with Expected Positions and Average Points"))
+}
+
+# Call the function to create the table
+create_table_from_ranked_teams(ranked_teams)
+
+```
+
+############## Question 2 #################
+# Which teams have the most variability in their simulated earnings?
+# Again, illustrate this variability with a clear visualization.
+```{r}
+Revenue_effects <- c(149.6, 145.9, 142.1, 138.4, 73.7, 70.0, 55.2, 33.5, 29.8, 26.0,
+                     22.3, 18.6, 14.9, 11.2, 7.5, 3.7, 0, -88.7, -92.5, -96.2)
+League_Position <- 1:20
+LeaguePositionRevenueEffect <- data.frame(League_Position = League_Position, Revenue_Effect = Revenue_effects)
+```
+
+```{r}
+# Redefine rank_and_assign_prizes function
+rank_and_assign_prizes <- function(results) {
+  # Sort results by points, goals difference, and tiebreakers
+  results <- results[order(-results$Points, -results$Goals.For + results$Goals.Against, results$Tiebreaker), ]
+  
+  # Assign league positions and prizes based on position
+  results$League.Position <- seq_len(nrow(results))
+  results$Prize.Money <- LeaguePositionRevenueEffect$Revenue_Effect[results$League.Position]
+  
+  return(results)
+}
+
+# Define function to simulate seasons and calculate revenue
+simulate_and_calculate_revenue <- function(n_sims) {
+  # Initialize a data frame to store revenue for each team
+  team_revenue <- data.frame(Team = rownames(df.prem), Average_Revenue = numeric(nrow(df.prem)), Average_Position = numeric(nrow(df.prem)), SD_Revenue = numeric(nrow(df.prem)))
+  
+  # Iterate over each simulation
+  for (i in 1:n_sims) {
+    # Simulate a season
+    season_results <- process_results(simulate_season(1))
+    
+    # Rank teams and assign prizes
+    season_results <- rank_and_assign_prizes(season_results)
+    
+    # Aggregate revenue for each team
+    team_revenue$Average_Revenue <- team_revenue$Average_Revenue + tapply(season_results$Prize.Money, match(team_revenue$Team, season_results$Team), sum)
+    
+    # Aggregate position for each team
+    team_revenue$Average_Position <- team_revenue$Average_Position + match(team_revenue$Team, season_results$Team)
+  }
+  
+  # Calculate average revenue and standard deviation of revenue for each team
+  team_revenue$Average_Revenue <- team_revenue$Average_Revenue / n_sims
+  team_revenue$Average_Position <- team_revenue$Average_Position / n_sims
+  
+  # Calculate standard deviation of revenue for each team
+  for (i in 1:n_sims) {
+    # Simulate a season
+    season_results <- process_results(simulate_season(1))
+    
+    # Rank teams and assign prizes
+    season_results <- rank_and_assign_prizes(season_results)
+    
+    # Calculate standard deviation
+    team_revenue$SD_Revenue <- team_revenue$SD_Revenue + ((tapply(season_results$Prize.Money, match(team_revenue$Team, season_results$Team), sum) - team_revenue$Average_Revenue)^2)
+  }
+  team_revenue$SD_Revenue <- sqrt(team_revenue$SD_Revenue / n_sims)
+  
+  # Return results
+  return(team_revenue)
+}
+
+# Run the simulation
+team_revenue_results <- simulate_and_calculate_revenue(1000)
+
+# Order the team revenue results by average position in ascending order
+team_revenue_results <- team_revenue_results[order(team_revenue_results$Average_Position), ]
+
+# Switch the values in the columns and rename them
+team_revenue_results <- team_revenue_results[, c("Team", "Average_Position", "Average_Revenue", "SD_Revenue")]
+colnames(team_revenue_results) <- c("Team", "Avg Position", "Avg Revenue", "Variability")
+
+# Print the table
+print("Table of Team Revenue Information:")
+print(knitr::kable(team_revenue_results, caption = "Team Revenue and Position Information"))
+
+
+```
+
+############## Question 3 #################
+# Which teams stand to benefit the most in monetary terms from a "lucky win" (converting one of their simulated losses to a win, holding everyone else constant)?
+# Again provide a visualization of this marginal effect
+```{r}
+simulate_lucky_win <- function(team, opponent) {
+  # Simulate a season
+  season_results <- process_results(simulate_season(1))
+  # Rank teams and assign prizes
+  ranked_results <- rank_and_assign_prizes(season_results)
+  # Calculate revenue before lucky win
+  revenue_before <- ranked_results$Prize.Money[ranked_results$Team == team]
+  # Simulate a match between the specified teams with a lucky win for the 'team' parameter
+  lucky_win_result <- draw.score(team, opponent)
+  if (lucky_win_result[1] > lucky_win_result[2]) {
+    # 'team' wins
+    revenue_after <- ranked_results$Prize.Money[ranked_results$Team == team] + Revenue_effects[ranked_results$League.Position[ranked_results$Team == team]]
+  } else {
+    # 'opponent' wins or draw
+    revenue_after <- revenue_before
+  }
+    # Calculate the change in revenue
+  revenue_change <- revenue_after - revenue_before
+  return(revenue_change)
+}
+
+```
+
+```{r}
+# Define a function to calculate revenue change for each team
+calculate_revenue_change <- function(team) {
+  revenue_changes <- numeric(nrow(df.prem))
+  for (opponent in rownames(df.prem)) {
+    if (opponent != team) {
+      revenue_changes[opponent] <- simulate_lucky_win(team, opponent)
+    }
+  }
+  return(revenue_changes)
+}
+# Calculate revenue changes for each team
+revenue_change_results <- lapply(rownames(df.prem), calculate_revenue_change)
+
+```
+
+```{r}
+# Define a function to visualize revenue changes
+visualize_revenue_changes <- function(revenue_changes) {
+  team_names <- rownames(df.prem)
+  team_data <- data.frame(Team = team_names, Revenue_Change = unlist(revenue_changes))
+  
+  ggplot(team_data, aes(x = reorder(Team, Revenue_Change), y = Revenue_Change)) +
+    geom_bar(stat = "identity", fill = "skyblue") +
+    labs(title = "Change in Revenue Due to Lucky Win", x = "Team", y = "Revenue Change") +
+    theme_minimal() +  
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+# Visualize revenue changes
+revenue_change_plot <- visualize_revenue_changes(revenue_change_results)
+print(revenue_change_plot)
+# Bars: Each bar represents a team, and its height represents the change in revenue. A taller bar indicates a larger potential revenue change if that team were to have a lucky win against their opponents.
+```
+```{r}
+# Print the numeric values of revenue change results
+print("Numeric values of revenue change results:")
+for (i in 1:length(revenue_change_results)) {
+  cat("Team:", rownames(df.prem)[i], "\n")
+  cat("Revenue Change:", revenue_change_results[[i]], "\n\n")
+}
+# Team: Manchester City : If the value is "0", it means there would be no change in revenue if Manchester City were to win against that particular opponent.
+# Non-zero values represent the change in revenue (in monetary terms) if Manchester City were to have a lucky win against that opponent. Positive values indicate an increase in revenue, while negative values indicate a decrease.
+
+```
+############## Question 4 #################
+# Finally, for each team, calculate the monetary benefit to each team from either (i) an increase of 10% to their expected goals scored (holding everyone else constant), or (ii) a decreasing in their expected goals conceded by 10% (Note that this means 40 separate simulations!)
+# Use this to provide a clear visualization of the benefits of investing in offense versus defense by team
+```{r}
+
+
+####### if add teams vector #######
+
+
+# Define a function to simulate the effect of increasing expected goals for a specific team
+
+simulate_increase_goals_team <- function(team, increase_percentage) {
+
+  # Simulate a season
+
+  season_results <- process_results(simulate_season(1))
+
+  # Rank teams and assign prizes
+
+  ranked_results <- rank_and_assign_prizes(season_results)
+
+  
+
+  # Find the specific team's data
+
+  team_data <- ranked_results[ranked_results$Team == team, ]
+
+  
+
+  # Calculate revenue before increasing expected goals
+
+  revenue_before <- team_data$Prize.Money
+
+  
+
+  # Simulate an increase in expected goals for the specified team
+
+  # Adjust the goals for the specified team by the increase_percentage
+
+  goals_for <- team_data$Goals.For
+
+  goals_for_increase <- goals_for * (1 + increase_percentage)
+
+  
+
+  # Update the goals for the specified team
+
+  team_data$Goals.For <- goals_for_increase
+
+  
+
+  # Recalculate the rankings and revenue after the adjustment
+
+  new_ranked_results <- rank_and_assign_prizes(team_data)
+
+  revenue_after <- new_ranked_results$Prize.Money
+
+  
+
+  # Calculate the change in revenue
+
+  revenue_change <- revenue_after - revenue_before
+
+  
+
+  return(list(revenue_before = revenue_before, revenue_after = revenue_after, revenue_change = revenue_change))
+
+}
+
+
+# Define a function to simulate the effect of decreasing expected goals against for a specific team
+
+simulate_decrease_goals_against_team <- function(team, decrease_percentage) {
+
+  # Simulate a season
+
+  season_results <- process_results(simulate_season(1))
+
+  # Rank teams and assign prizes
+
+  ranked_results <- rank_and_assign_prizes(season_results)
+
+  
+
+  # Find the specific team's data
+
+  team_data <- ranked_results[ranked_results$Team == team, ]
+
+  
+
+  # Calculate revenue before decreasing expected goals against
+
+  revenue_before <- team_data$Prize.Money
+
+  
+
+  # Simulate a decrease in expected goals against for the specified team
+
+  # Adjust the goals against for all opponents of the specified team by the decrease_percentage
+
+  opponents <- rownames(df.prem)[rownames(df.prem) != team]
+
+  goals_against <- team_data$Goals.Against
+
+  goals_against_decrease <- goals_against * (1 - decrease_percentage)
+
+  
+
+  # Update the goals against for all opponents of the specified team
+
+  for (opponent in opponents) {
+
+    team_data$Goals.Against[team_data$Opponent == opponent] <- goals_against_decrease
+
+  }
+
+  
+
+  # Recalculate the rankings and revenue after the adjustment
+
+  new_ranked_results <- rank_and_assign_prizes(team_data)
+
+  revenue_after <- new_ranked_results$Prize.Money
+
+  
+
+  # Calculate the change in revenue
+
+  revenue_change <- revenue_after - revenue_before
+
+  return(list(revenue_before = revenue_before, revenue_after = revenue_after, revenue_change = revenue_change))
+
+}
+
+
+# Vector of all teams
+
+teams <- c("Manchester City", "Liverpool", "Arsenal", "Newcastle", "Brighton and Hove Albion", "Aston Villa", "Manchester United", "Brentford", "Chelsea",
+
+           "Crystal Palace", "Tottenham Hotspur", "West Ham United", "Fulham", "Leicester City", "Everton", "AFC Bournemouth", "Wolverhampton",
+
+           "Leeds United", "Southampton", "Nottingham Forest")
+
+
+
+# Lists to store results
+
+increase_results <- list()
+
+decrease_results <- list()
+
+
+# Loop over each team and simulate changes
+
+for (team in teams) {
+
+  increase_results[[team]] <- simulate_increase_goals_team(team, 0.1)
+
+  decrease_results[[team]] <- simulate_decrease_goals_against_team(team, 0.1)
+
+}
+
+
+# Dataframe for visualization
+
+increase_df <- data.frame(
+
+  Team = teams,
+
+  Revenue_Change = sapply(increase_results, function(x) x$revenue_change)
+
+)
+
+
+decrease_df <- data.frame(
+
+  Team = teams,
+
+  Revenue_Change = sapply(decrease_results, function(x) x$revenue_change)
+
+)
+
+
+# Visualization
+
+ggplot(increase_df, aes(x = Team, y = Revenue_Change)) +
+
+  geom_bar(stat = "identity", fill = "skyblue") +
+
+  ggtitle("Revenue Change with 10% Increase in Expected Goals") +
+
+  xlab("Team") +
+
+  ylab("Revenue Change") +
+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplot(decrease_df, aes(x = Team, y = Revenue_Change)) +
+
+  geom_bar(stat = "identity", fill = "lightgreen") +
+
+  ggtitle("Revenue Change with 10% Decrease in Expected Goals Against") +
+
+  xlab("Team") +
+
+  ylab("Revenue Change") +
+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+library(ggplot2)
+
+# Define color palette
+colors <- c("skyblue", "lightgreen")
+
+# Combine data frames
+combined_df <- rbind(increase_df, decrease_df)
+combined_df$Strategy <- rep(c("Invest in Offense", "Invest in Defense"), each = nrow(increase_df))
+
+# Plot combined bar chart
+combined_plot <- ggplot(combined_df, aes(x = Team, y = Revenue_Change, fill = Strategy)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("Comparison of Revenue Changes with Different Strategies") +
+  xlab("Team") +
+  ylab("Revenue Change") +
+  scale_fill_manual(values = colors) +
+  theme(axis.text.x = element_text(angle = 65, hjust = 1))
+
+# Display the combined plot
+print(combined_plot)
+
+
+
+```
+
+
+
+```
+
+
+
+
